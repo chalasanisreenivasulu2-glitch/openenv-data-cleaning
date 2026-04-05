@@ -7,7 +7,7 @@ An OpenEnv-compliant environment where an AI agent cleans dirty CSV datasets thr
 The agent is presented with a messy DataFrame and must apply cleaning operations step-by-step to fix real data quality issues: duplicates, missing values, inconsistent formats, outliers, and value normalization.
 
 # Prepend HF metadata to README.md
-$metadata = @"
+$metadata = "---`ntitle: OpenEnv Data Cleaning`nemoji: 🧹`ncolorFrom: blue`ncolorTo: green`nsdk: docker`npinned: false`ntags:`n  - openenv`n---`n`n"
 ---
 title: OpenEnv Data Cleaning
 emoji: 🧹
@@ -21,7 +21,8 @@ tags:
 
 "@
 $existing = Get-Content README.md -Raw
-Set-Content README.md ($metadata + $existing)
+Set-Content README.md ($metadata + $existing) -NoNewline
+
 
 
 ## Action Space
