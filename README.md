@@ -1,5 +1,13 @@
-# DataCleaning OpenEnv
-
+---
+title: OpenEnv Data Cleaning
+emoji: 🧹
+colorFrom: blue
+colorTo: green
+sdk: docker
+pinned: false
+tags:
+  - openenv
+---
 An OpenEnv-compliant environment where an AI agent cleans dirty CSV datasets through a structured action API.
 
 ## Environment Description
