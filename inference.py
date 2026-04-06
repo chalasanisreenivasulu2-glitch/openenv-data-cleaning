@@ -3,9 +3,10 @@ inference.py — Baseline inference script for DataCleaning OpenEnv.
 
 Uses the OpenAI client to run an LLM agent against all 3 tasks.
 Reads credentials from environment variables:
-  API_BASE_URL  — LLM API endpoint
-  MODEL_NAME    — model identifier
-  HF_TOKEN      — Hugging Face / API key (used as openai api_key)
+  API_BASE_URL  — LLM API endpoint (default: Groq)
+  MODEL_NAME    — model identifier (default: llama-3.1-8b-instant)
+  HF_TOKEN      — API key, NO default (must be set by user)
+  ENV_BASE_URL  — environment URL (default: localhost)
 
 Run:
   python inference.py
@@ -15,19 +16,21 @@ import json
 import os
 import sys
 import requests
-
 from openai import OpenAI
 
-# ── Config ──────────────────────────────────────────────────────────────────
-# Credentials are read from environment variables.
-# The script uses the OpenAI client which works with any OpenAI-compatible endpoint.
-# Judges: set API_BASE_URL, MODEL_NAME, HF_TOKEN to your preferred provider.
-# Default: Groq (free tier) with llama-3.1-8b-instant
+# ── Config ───────────────────────────────────────────────────────────────────
+# API_BASE_URL and MODEL_NAME have defaults (as required by spec)
+# HF_TOKEN has NO default — must be provided via environment variable
 API_BASE_URL = os.environ.get("API_BASE_URL", "https://api.groq.com/openai/v1")
 MODEL_NAME   = os.environ.get("MODEL_NAME", "llama-3.1-8b-instant")
-HF_TOKEN     = os.environ.get("HF_TOKEN", "")
+HF_TOKEN     = os.environ.get("HF_TOKEN")          # NO default — required
 ENV_BASE_URL = os.environ.get("ENV_BASE_URL", "http://localhost:7860")
 
+if not HF_TOKEN:
+    print("[ERROR] HF_TOKEN environment variable is not set. Please set your API key.")
+    sys.exit(1)
+
+# All LLM calls use the OpenAI client configured via environment variables
 client = OpenAI(api_key=HF_TOKEN, base_url=API_BASE_URL)
 
 TASKS = ["easy", "medium", "hard"]
@@ -46,18 +49,17 @@ Valid JSON examples:
 {"operation": "drop_outliers", "column": "revenue", "threshold": 3.0}
 {"operation": "finish"}
 
-IMPORTANT RULES:
-- The JSON key MUST be "operation" — never "action" or anything else
-- For date columns: use standardize_format with format_type=date -> converts to YYYY-MM-DD
-- For phone columns: use standardize_format with format_type=phone -> converts to (XXX)XXX-XXXX
-- For gender columns: use standardize_format with format_type=category_gender -> normalizes to M or F. Do NOT reverse this afterward.
-- NEVER use fill_missing or drop_outliers on text columns like dates, phones, or gender
-- NEVER use replace_value to undo a standardize_format you already applied
-- Once a column is standardized, move on to the next issue
+RULES:
+- JSON key MUST be "operation"
+- For date columns: standardize_format with format_type=date -> YYYY-MM-DD
+- For phone columns: standardize_format with format_type=phone -> (XXX)XXX-XXXX
+- For gender columns: standardize_format with format_type=category_gender -> M or F
+- NEVER use fill_missing or drop_outliers on text columns
 - When all issues are resolved, issue finish
 
-Always respond with ONLY a valid JSON object. No explanation, no markdown, just raw JSON.
+Respond with ONLY a valid JSON object. No explanation, no markdown.
 """
+
 
 def env_reset(task_id: str) -> dict:
     r = requests.post(f"{ENV_BASE_URL}/reset", params={"task_id": task_id})
@@ -77,15 +79,13 @@ def env_step(task_id: str, action: dict) -> dict:
 
 
 def run_task(task_id: str) -> float:
-    print(f"\n{'='*50}")
-    print(f"  Task: {task_id.upper()}")
-    print(f"{'='*50}")
+    # ── START log ────────────────────────────────────────────────────────────
+    print(f"[START] task={task_id} model={MODEL_NAME} env={ENV_BASE_URL}")
 
     obs = env_reset(task_id)
-    history = []  # fresh history per task — no leakage between tasks
+    history = []
     final_reward = 0.0
 
-    # Build task-specific instructions so agent knows exactly what to do
     task_instructions = {
         "easy": (
             "Step 1: remove_duplicates\n"
@@ -93,9 +93,9 @@ def run_task(task_id: str) -> float:
             "Step 3: finish"
         ),
         "medium": (
-            "Step 1: standardize_format on gender with format_type=category_gender (normalizes to M/F)\n"
-            "Step 2: standardize_format on dob with format_type=date (normalizes to YYYY-MM-DD)\n"
-            "Step 3: standardize_format on phone with format_type=phone (normalizes to (XXX)XXX-XXXX)\n"
+            "Step 1: standardize_format on gender with format_type=category_gender\n"
+            "Step 2: standardize_format on dob with format_type=date\n"
+            "Step 3: standardize_format on phone with format_type=phone\n"
             "Step 4: finish"
         ),
         "hard": (
@@ -110,24 +110,22 @@ def run_task(task_id: str) -> float:
             "Step 9: finish"
         ),
     }
+
     briefing = (
         f"You are cleaning a '{task_id}' dataset.\n"
         f"Columns available: {obs['columns']}\n"
         f"Follow these steps exactly in order:\n"
         f"{task_instructions.get(task_id, 'Fix all issues then finish.')}\n"
-        f"Only use columns that exist in the dataset. Issue one JSON action per response."
+        f"Issue one JSON action per response."
     )
     history.append({"role": "user", "content": briefing})
-    history.append({"role": "assistant", "content": '{"operation": "remove_duplicates"}'
-        if obs['duplicate_count'] > 0 else
-        '{"operation": "standardize_format", "column": "gender", "format_type": "category_gender"}'
-        if task_id == "medium" else
+    history.append({"role": "assistant", "content":
+        '{"operation": "remove_duplicates"}' if obs['duplicate_count'] > 0 else
+        '{"operation": "standardize_format", "column": "gender", "format_type": "category_gender"}' if task_id == "medium" else
         '{"operation": "fill_missing", "column": "quantity", "strategy": "mean"}'
     })
 
-    for step_num in range(100):  # hard cap
-        # Build message
-        # Compact observation to save tokens
+    for step_num in range(100):
         missing_only = {k: v for k, v in obs['missing_counts'].items() if v > 0}
         status_msg = "STATUS: All issues resolved. Issue finish now." if (
             not obs['issues'] and obs['duplicate_count'] == 0
@@ -143,8 +141,6 @@ def run_task(task_id: str) -> float:
         )
 
         history.append({"role": "user", "content": obs_text})
-
-        # Keep only last 6 messages to avoid token limit (3 exchanges)
         trimmed_history = history[-6:] if len(history) > 6 else history
 
         response = client.chat.completions.create(
@@ -155,14 +151,11 @@ def run_task(task_id: str) -> float:
         )
 
         raw = response.choices[0].message.content.strip()
-        print(f"Step {step_num+1} | Agent: {raw}")
 
         # Parse action
         try:
-            # Strip markdown code fences if present
             clean = raw.replace("```json", "").replace("```", "").strip()
             action = json.loads(clean)
-            # Auto-correct common LLM mistakes: "action" -> "operation"
             if "action" in action and "operation" not in action:
                 action["operation"] = action.pop("action")
             if "command" in action and "operation" not in action:
@@ -170,7 +163,6 @@ def run_task(task_id: str) -> float:
             if "type" in action and "operation" not in action:
                 action["operation"] = action.pop("type")
         except json.JSONDecodeError:
-            print(f"  [WARN] Could not parse action, finishing.")
             action = {"operation": "finish"}
 
         history.append({"role": "assistant", "content": raw})
@@ -181,31 +173,27 @@ def run_task(task_id: str) -> float:
         done = result["done"]
         error = result["info"].get("error")
 
-        print(f"         Reward: {final_reward:.3f} | Done: {done}")
+        # ── STEP log ─────────────────────────────────────────────────────────
+        print(f"[STEP] task={task_id} step={step_num+1} action={json.dumps(action)} reward={final_reward:.4f} done={done}")
         if error:
-            print(f"         Error: {error}")
-            # Tell agent about the error so it can try something different
-            history.append({"role": "user", "content": f"Error: {error}. Try a different operation or different parameters."})
+            print(f"[STEP] task={task_id} step={step_num+1} error={error}")
+            history.append({"role": "user", "content": f"Error: {error}. Try different parameters."})
 
         if done:
             break
 
-        # Early exit if perfect score
         if final_reward >= 1.0:
-            print(f"         [Perfect score reached, finishing early]")
             env_step(task_id, {"operation": "finish"})
             break
 
-        # If no issues remain, force finish
         if not obs["issues"] and obs["duplicate_count"] == 0 and all(v == 0 for v in obs["missing_counts"].values()):
-            print(f"         [No issues remain, forcing finish]")
             env_step(task_id, {"operation": "finish"})
             break
 
-        # Also tell the agent the current reward so it knows when to stop
         obs["current_reward"] = final_reward
 
-    print(f"\n  Final score for '{task_id}': {final_reward:.4f}")
+    # ── END log ──────────────────────────────────────────────────────────────
+    print(f"[END] task={task_id} final_score={final_reward:.4f}")
     return final_reward
 
 
@@ -215,22 +203,18 @@ def main():
         try:
             scores[task_id] = run_task(task_id)
         except Exception as e:
-            print(f"[ERROR] Task '{task_id}' failed: {e}")
+            print(f"[ERROR] task={task_id} error={e}")
             scores[task_id] = 0.0
 
-    print(f"\n{'='*50}")
-    print("  FINAL SCORES")
-    print(f"{'='*50}")
+    print(f"\n[RESULTS]")
     for task_id, score in scores.items():
-        print(f"  {task_id:8s}: {score:.4f}")
+        print(f"[RESULTS] {task_id}={score:.4f}")
     avg = sum(scores.values()) / len(scores)
-    print(f"  {'average':8s}: {avg:.4f}")
-    print(f"{'='*50}")
+    print(f"[RESULTS] average={avg:.4f}")
 
-    # Write scores to file for CI
     with open("scores.json", "w") as f:
         json.dump({"scores": scores, "average": avg}, f, indent=2)
-    print("\nScores written to scores.json")
+    print("[RESULTS] scores written to scores.json")
 
 
 if __name__ == "__main__":
