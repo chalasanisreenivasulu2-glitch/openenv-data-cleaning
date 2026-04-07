@@ -1,84 +1,58 @@
+spec_version: 1
 name: data-cleaning-env
-version: "1.0.0"
-description: >
-  A real-world OpenEnv environment where an AI agent cleans dirty CSV datasets.
-  The agent applies data cleaning operations (fill missing, remove duplicates,
-  standardize formats, replace values, drop outliers) to transform a messy CSV
-  into a clean one. Tasks range from easy duplicate removal to hard multi-issue
-  cleaning with imputation and normalization.
+type: environment
+runtime: docker
+app: server:app
+port: 7860
 
-author: openenv-hackathon
-tags: [openenv, data-cleaning, real-world, csv]
-
-observation_space:
-  type: object
-  description: Current state of the CSV + metadata about remaining issues
-  fields:
-    - name: columns
-      type: list[str]
-    - name: shape
-      type: list[int]
-    - name: missing_counts
-      type: dict[str, int]
-    - name: duplicate_count
-      type: int
-    - name: sample_rows
-      type: list[dict]
-    - name: issues
-      type: list[str]
-
-action_space:
-  type: object
-  description: One cleaning operation per step
-  fields:
-    - name: operation
-      type: str
-      enum: [fill_missing, remove_duplicates, standardize_format, replace_value, drop_outliers, finish]
-    - name: column
-      type: str
-      optional: true
-    - name: strategy
-      type: str
-      optional: true
-    - name: value
-      type: any
-      optional: true
-    - name: old_value
-      type: str
-      optional: true
-    - name: new_value
-      type: str
-      optional: true
-    - name: threshold
-      type: float
-      optional: true
-    - name: format_type
-      type: str
-      optional: true
-
-reward_range: [0.0, 1.0]
+metadata:
+  description: >
+    A real-world OpenEnv environment where an AI agent cleans dirty CSV datasets.
+    The agent applies data cleaning operations to fix duplicates, missing values,
+    inconsistent formats, outliers, and value normalization.
+  tags:
+    - openenv
+    - data-cleaning
+    - real-world
+    - csv
 
 tasks:
   - id: easy
     name: Remove Duplicates & Fill Nulls
     difficulty: easy
     max_steps: 10
-    description: >
-      A simple employee dataset with exact duplicate rows and missing salary
-      values. Agent must remove duplicates and fill missing numeric values.
+    description: Remove duplicate rows and fill missing salary values.
 
   - id: medium
     name: Format Standardization
     difficulty: medium
     max_steps: 20
-    description: >
-      A customer dataset with inconsistent date formats, mixed phone number
-      formats, and inconsistent categorical values. Agent must standardize all.
+    description: Standardize date, phone, and gender formats.
 
   - id: hard
     name: Full Multi-Issue Cleaning
     difficulty: hard
     max_steps: 30
-    description: >
-      A sales dataset with duplicates, missing values, outliers, inconsistent
-      formats, and value normalization needed across multiple columns.
+    description: Fix duplicates, missing values, outliers, and format inconsistencies.
+
+action_space:
+  type: object
+  operations:
+    - remove_duplicates
+    - fill_missing
+    - standardize_format
+    - replace_value
+    - drop_outliers
+    - finish
+
+observation_space:
+  type: object
+  fields:
+    - columns
+    - shape
+    - missing_counts
+    - duplicate_count
+    - sample_rows
+    - issues
+
+reward_range: [0.0, 1.0]
