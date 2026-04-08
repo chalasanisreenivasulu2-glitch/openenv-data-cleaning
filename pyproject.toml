@@ -27,7 +27,8 @@ dependencies = [
 dev = ["pytest", "httpx"]
 
 [project.scripts]
-serve = "server:app"
+serve = "server.app:app"
 
 [tool.setuptools.packages.find]
 where = ["."]
+include = ["server*"]
